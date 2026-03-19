@@ -1,0 +1,26 @@
+name: ci
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Install esbuild
+        run: |
+          curl -sSL -o /tmp/esbuild https://github.com/evanw/esbuild/releases/download/v0.24.2/esbuild-linux-x64
+          chmod +x /tmp/esbuild
+          sudo mv /tmp/esbuild /usr/local/bin/esbuild
+      - name: Go (speedplane)
+        run: cd speedplane && go build -o /dev/null .
+      - name: Go (dnslat)
+        run: |
+          make dnslat-frontend
+          go build -o /dev/null ./cmd/dnslat

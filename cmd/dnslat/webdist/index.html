@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en" data-template="{{.CurrentTemplate}}" data-scheme="{{.CurrentScheme}}">
+<head>
+  <meta charset="utf-8" />
+  <title>{{.Title}}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style id="theme-css"></style>
+  <style>
+    .icon-inline{display:inline-block;vertical-align:middle;width:1em;height:1em;flex-shrink:0;}
+    .about-logo .icon-brand{width:3em;height:3em;display:block;margin:0 auto;}
+    .about-section{text-align:center;padding:20px;}
+    .about-logo{color:var(--accent);margin-bottom:16px;}
+    .about-section h3{font-size:18px;color:var(--txt);margin-bottom:4px;text-transform:none;letter-spacing:0;}
+    .about-version{color:var(--muted);font-size:12px;margin-bottom:16px;}
+    .about-desc{color:var(--txt);font-size:13px;line-height:1.6;margin-bottom:20px;}
+    .about-links{margin-bottom:20px;}
+    .about-links a{color:var(--accent);text-decoration:none;font-size:13px;display:inline-flex;align-items:center;gap:6px;}
+    .about-links a:hover{text-decoration:underline;}
+    .about-copyright{color:var(--muted);font-size:11px;}
+    .header .search{margin-left:auto;justify-content:flex-end;}
+    .progress-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:1000;}
+    .progress-modal{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:300px;max-width:500px;}
+    .progress-header{margin-bottom:16px;}
+    .progress-header h3{margin:0;font-size:18px;color:var(--txt);}
+    .progress-content{display:flex;flex-direction:column;align-items:center;gap:12px;}
+    .progress-spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .progress-status{font-size:14px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;}
+    .progress-message{font-size:13px;color:var(--muted);text-align:center;}
+    .chart-toggle{position:relative;width:44px;height:22px;background:var(--border);border:1px solid var(--border);border-radius:11px;cursor:pointer;padding:0;transition:background .2s,border-color .2s;display:flex;align-items:center;box-sizing:border-box;}
+    .chart-toggle:hover{background:rgba(255,255,255,.08);border-color:var(--accent);}
+    .chart-toggle.active{background:var(--accent);border-color:var(--accent);}
+    .chart-toggle-slider{position:absolute;left:2px;width:18px;height:18px;background:var(--bg);border-radius:50%;transition:transform .2s ease;box-shadow:0 1px 3px rgba(0,0,0,.3);}
+    .chart-toggle.active .chart-toggle-slider{transform:translateX(22px);}
+    #individual-charts .panel{margin-bottom:12px;}
+    /* dnslat: dashboard card values (theme often uses ~28px) */
+    #view-dashboard .cards-row .card .card-value{font-size:20px;line-height:1.25;font-weight:600;}
+    #view-dashboard .cards-row .card .card-value-dnslat-stack{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;}
+    #view-dashboard .cards-row .card .card-dnslat-line1{font-size:20px;font-weight:600;word-break:break-word;max-width:100%;}
+    #view-dashboard .cards-row .card .card-dnslat-line2{font-size:18px;font-weight:600;color:var(--accent);opacity:0.95;}
+    /* no text inside timer — radial fill is theme .timer-circle::before conic-gradient + --progress-percent */
+    #schedule-timer.timer-circle{font-size:0;line-height:0;color:transparent;overflow:hidden;}
+    th.history-sortable{cursor:pointer;user-select:none;white-space:nowrap;}
+    th.history-sortable:hover{color:var(--accent);}
+    .history-sort-indicator{font-size:0.75em;opacity:0.7;margin-left:4px;}
+    .confirm-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}
+    .btn-danger{background:#b91c1c!important;border-color:#b91c1c!important;color:#fff!important;}
+    .btn-danger:hover{filter:brightness(1.08);}
+  </style>
+</head>
+<body>
+<script>
+(function() {
+  const savedTemplate = localStorage.getItem('template') || '{{.CurrentTemplate}}' || 'modern';
+  const savedScheme = localStorage.getItem('scheme') || '{{.CurrentScheme}}' || 'default';
+  document.documentElement.setAttribute('data-template', savedTemplate);
+  document.documentElement.setAttribute('data-scheme', savedScheme);
+  var themeController = new AbortController();
+  var themeTimeout = setTimeout(function() { themeController.abort(); }, 2000);
+  fetch('/api/theme?template=' + encodeURIComponent(savedTemplate) + '&scheme=' + encodeURIComponent(savedScheme), { signal: themeController.signal })
+    .then(function(res) { clearTimeout(themeTimeout); return res.text(); })
+    .then(function(css) { var s = document.getElementById('theme-css'); if (s) s.textContent = css; })
+    .catch(function(err) { clearTimeout(themeTimeout); if (err.name !== 'AbortError') console.error('theme', err); });
+  window.addEventListener('DOMContentLoaded', function() {
+    var hiddenMenus = document.createElement('div');
+    hiddenMenus.style.display = 'none';
+    hiddenMenus.innerHTML = '<div id="schemeMenu">{{.SchemeMenuHTML}}</div>';
+    document.body.appendChild(hiddenMenus);
+  });
+})();
+</script>
+  <div class="header">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <div class="h-title">dnslat</div>
+        <div class="h-sub" id="subtitle">Dashboard</div>
+      </div>
+    </div>
+    <div class="search">
+      <div class="timer-circle" id="schedule-timer" title="Loading..." style="display: none;"></div>
+      <button id="run-now-btn" class="btn">Run DNS probe now</button>
+    </div>
+  </div>
+
+  <aside class="sidebar collapsed" id="sidebar">
+    <div class="sidebar-header">
+      <div class="app-title">dnslat</div>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-item nav-item-active" data-view="dashboard" data-letter="D"><span>Dashboard</span></button>
+      <button class="nav-item" data-view="history" data-letter="R"><span>Results</span></button>
+      <button class="nav-item" data-view="preferences" data-letter="P"><span>Preferences</span></button>
+      <button class="nav-item" data-view="about" data-letter="A"><span>About</span></button>
+    </nav>
+    <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar">
+      <svg class="icon-inline" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z"/></svg>
+      <span>Collapse</span>
+    </button>
+  </aside>
+
+  <div class="main">
+    <section id="view-dashboard" class="view view-active">
+      <div class="cards-row">
+        <div class="card">
+          <div class="card-label">Query domain</div>
+          <div id="card-domain" class="card-value">–</div>
+          <div class="card-compare"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Fastest <span style="font-size:0.65em;opacity:0.7;text-transform:none;">(latest)</span></div>
+          <div class="card-value card-value-dnslat-stack">
+            <span id="card-fastest-name" class="card-dnslat-line1">–</span>
+            <span id="card-fastest-ms" class="card-dnslat-line2">–</span>
+          </div>
+          <div id="card-fastest-compare" class="card-compare"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Median latency <span style="font-size:0.65em;opacity:0.7;text-transform:none;">ms</span></div>
+          <div id="card-median" class="card-value">–</div>
+          <div id="card-median-compare" class="card-compare"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Slowest <span style="font-size:0.65em;opacity:0.7;text-transform:none;">(latest)</span></div>
+          <div class="card-value card-value-dnslat-stack">
+            <span id="card-slowest-name" class="card-dnslat-line1">–</span>
+            <span id="card-slowest-ms" class="card-dnslat-line2">–</span>
+          </div>
+          <div class="card-compare"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Runs <span style="font-size:0.65em;opacity:0.7;text-transform:none;">30d</span></div>
+          <div id="card-runs" class="card-value">–</div>
+          <div class="card-compare"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="combined-chart-panel" style="display: none;">
+        <div class="panel-header">
+          <div class="panel-title">All resolvers (latency)</div>
+          <select id="range-combined" class="select">
+            <option value="24h">Last 24h</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </div>
+        <div class="chart" id="combined-chart"></div>
+      </div>
+
+      <div id="individual-charts"></div>
+
+      <div style="display: flex; gap: 8px; justify-content: center; margin-top: 16px;">
+        <a href="/api/export/current.json" class="btn" download>Export JSON</a>
+        <a href="/api/export/current.csv" class="btn" download>Export CSV</a>
+      </div>
+    </section>
+
+    <section id="view-history" class="view" style="width: 100%;">
+      <div class="panel" style="width: 100%;">
+        <div class="panel-header" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;">
+          <div class="panel-title" style="flex: 0 0 auto;">Results</div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: 1 1 auto; justify-content: flex-end;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);">
+              <span>Per page</span>
+              <select id="history-per-page" class="select" style="width: auto;">
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="200">200</option>
+              </select>
+            </label>
+            <div id="history-pagination" style="display: flex; align-items: center; gap: 8px;">
+              <button type="button" class="btn" id="history-page-first">«</button>
+              <button type="button" class="btn" id="history-page-prev">‹</button>
+              <span id="history-page-info" style="font-size: 13px; color: var(--muted); min-width: 120px; text-align: center;">—</span>
+              <button type="button" class="btn" id="history-page-next">›</button>
+              <button type="button" class="btn" id="history-page-last">»</button>
+            </div>
+            <a href="/api/export/history.json" class="btn" download>Export JSON</a>
+            <a href="/api/export/history.csv" class="btn" download>Export CSV</a>
+          </div>
+        </div>
+        <div style="overflow-x: auto;">
+          <table class="table" id="history-table" style="width: 100%; min-width: 640px;">
+            <thead><tr id="history-thead-row"></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-preferences" class="view">
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Appearance</div></div>
+        <div class="form">
+          <div class="form-row form-row-inline">
+            <div class="form-field">
+              <label>Theme</label>
+              <select id="pref-template">{{range .TemplatesList}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+            </div>
+            <div class="form-field">
+              <label>Color scheme</label>
+              <select id="pref-scheme"></select>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Dashboard</div></div>
+        <div class="form">
+          <div class="form-row form-row-inline">
+            <div class="form-field">
+              <label style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="pref-combined-graph" style="width: auto;" />
+                <span>Show combined graph</span>
+              </label>
+            </div>
+            <div class="form-field">
+              <label style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="pref-logarithmic-scale" style="width: auto;" />
+                <span>Logarithmic scale</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">DNS</div></div>
+        <div class="form">
+          <div class="form-row">
+            <div class="form-field">
+              <label>Default query domain</label>
+              <input type="text" id="pref-default-domain" placeholder="example.com" />
+            </div>
+            <div class="form-field">
+              <label style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="pref-save-manual-runs" style="width: auto;" />
+                <span>Save manual probe results to database</span>
+              </label>
+              <div class="form-hint">When off, Run now only shows results without storing them.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Resolvers</div></div>
+        <div class="form">
+          <ul id="resolver-list" class="muted" style="list-style:none;padding:0;margin-bottom:12px;"></ul>
+          <div class="form-row form-row-inline">
+            <div class="form-field"><label>Name</label><input type="text" id="new-res-name" /></div>
+            <div class="form-field"><label>Address</label><input type="text" id="new-res-addr" placeholder="1.1.1.1" /></div>
+            <div class="form-field"><label>&nbsp;</label><button type="button" class="btn" id="add-resolver">Add</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Schedules</div></div>
+        <div id="schedules-list"></div>
+        <form id="schedule-form" class="form">
+          <input type="hidden" id="schedule-form-id" />
+          <div class="form-row form-row-inline">
+            <div class="form-field"><label>Name</label><input type="text" id="schedule-form-name" /></div>
+            <div class="form-field"><label>Type</label>
+              <select id="schedule-form-type"><option value="interval">Interval</option><option value="daily">Daily</option></select>
+            </div>
+            <div class="form-field" id="schedule-form-every-field" style="display:none;"><label>Every</label><input type="text" id="schedule-form-every" placeholder="1h" /></div>
+            <div class="form-field" id="schedule-form-timeOfDay-field" style="display:none;"><label>Time</label><input type="text" id="schedule-form-timeOfDay" placeholder="14:30" /></div>
+            <div class="form-field"><label>Enabled</label><input type="checkbox" id="schedule-form-enabled" checked /></div>
+            <div class="form-field"><label>&nbsp;</label><button type="submit" class="btn" id="schedule-form-submit">Add</button></div>
+          </div>
+          <button type="button" class="btn" id="schedule-form-cancel" style="display:none;">Cancel</button>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Data</div></div>
+        <div class="form">
+          <p class="form-hint" style="margin-bottom:12px;">Remove every stored probe run from the database. Resolvers, schedules, and preferences are not changed.</p>
+          <button type="button" class="btn btn-danger" id="pref-clear-all-data">Clear all results</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-about" class="view">
+      <div class="panel">
+        <div class="about-section">
+          <div class="about-logo" aria-hidden="true">
+            <svg class="icon-brand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="5" r="2.25" fill="currentColor" stroke="none"/>
+              <circle cx="5.5" cy="18.5" r="2.25" fill="currentColor" stroke="none"/>
+              <circle cx="18.5" cy="18.5" r="2.25" fill="currentColor" stroke="none"/>
+              <path d="M12 7.25v3.5M10.2 14.2L7.3 17M13.8 14.2l2.9 2.8"/>
+            </svg>
+          </div>
+          <h3>dnslat</h3>
+          <p class="about-version">Version {{.AppVersion}}</p>
+          <p class="about-desc">DNS latency dashboard: probe multiple resolvers on a schedule or manually, with history and charts.</p>
+          <p class="about-copyright">© {{.Year}}</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="progress-modal" class="progress-modal-overlay" style="display: none;">
+    <div class="progress-modal">
+      <div class="progress-header"><h3>DNS probe</h3></div>
+      <div class="progress-content">
+        <div class="progress-spinner"></div>
+        <div class="progress-status" id="progress-status">Running</div>
+        <div class="progress-message" id="progress-message">…</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="result-modal" class="progress-modal-overlay" style="display: none;">
+    <div class="progress-modal" style="max-width: 520px;">
+      <div class="progress-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 id="result-modal-title">Results</h3>
+        <button type="button" class="btn" id="result-modal-close">Close</button>
+      </div>
+      <div id="result-modal-body" style="font-size:13px;color:var(--txt);max-height:360px;overflow:auto;"></div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="progress-modal-overlay" style="display: none;" aria-modal="true" role="dialog">
+    <div class="progress-modal" style="max-width: 440px;">
+      <div class="progress-header"><h3 id="confirm-modal-title">Confirm</h3></div>
+      <p id="confirm-modal-message" style="margin:0;font-size:14px;color:var(--txt);line-height:1.5;"></p>
+      <div class="confirm-modal-actions">
+        <button type="button" class="btn" id="confirm-modal-cancel">Cancel</button>
+        <button type="button" class="btn" id="confirm-modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
