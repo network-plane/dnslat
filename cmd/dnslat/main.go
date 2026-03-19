@@ -91,7 +91,12 @@ func run(cmd *cobra.Command, args []string) {
 		cfg.LastRun = make(map[string]time.Time)
 	}
 
-	st, err := storage.New(dbPath, cfg.DataDir)
+	effectiveDB := dbPath
+	if effectiveDB == "" {
+		effectiveDB = cfg.DBPath
+	}
+
+	st, err := storage.New(effectiveDB, cfg.DataDir)
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
@@ -100,13 +105,18 @@ func run(cmd *cobra.Command, args []string) {
 	if cfgFile == "" {
 		cfgFile = "(unset; save uses data_dir/dnslat.config)"
 	}
-	dbFile := dbPath
+	dbFile := effectiveDB
 	if dbFile == "" {
 		dbFile = filepath.Join(cfg.DataDir, "dnslat.results")
-	} else if fi, e := os.Stat(dbPath); e == nil && fi.IsDir() {
-		dbFile = filepath.Join(dbPath, "dnslat.results")
+	} else if fi, e := os.Stat(effectiveDB); e == nil && fi.IsDir() {
+		dbFile = filepath.Join(effectiveDB, "dnslat.results")
 	}
-	log.Printf("[dnslat] startup config_file=%q data_dir=%q db_file=%q", cfgFile, cfg.DataDir, dbFile)
+
+	useCLIListen := cmd.Flags().Changed("listen") || cmd.Flags().Changed("listen-port")
+	tcpAddr := config.TCPListenAddress(useCLIListen, listenAddr, listenPort, cfg.ListenAddr)
+
+	log.Printf("[dnslat] startup config_file=%q data_dir=%q db_file=%q listen=%q public_dashboard=%v",
+		cfgFile, cfg.DataDir, dbFile, tcpAddr, cfg.PublicDashboard)
 	log.Printf("[dnslat] startup schedules=%d save_manual_runs=%v default_domain=%q",
 		len(cfg.Schedules), cfg.SaveManualRuns, cfg.DefaultQueryDomain)
 	if rlist, e := st.ListResolvers(); e != nil {
@@ -239,6 +249,7 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 	api.RegisterStatic(mux, staticSub)
+
 	mux.HandleFunc("/main.js", func(w http.ResponseWriter, r *http.Request) {
 		b, err := webdist.ReadFile("webdist/main.js")
 		if err != nil {
@@ -258,17 +269,19 @@ func run(cmd *cobra.Command, args []string) {
 		_, _ = w.Write(b)
 	})
 
-	addr := fmt.Sprintf(":%d", listenPort)
-	if listenAddr != "" && listenAddr != "all" {
-		addr = fmt.Sprintf("%s:%d", listenAddr, listenPort)
+	handler := http.Handler(mux)
+	if !cfg.PublicDashboard {
+		handler = localOnly(handler)
+		log.Println("[dnslat] public_dashboard=false: HTTP is limited to loopback clients (127.0.0.1 / ::1)")
 	}
-	planeweblisten.LogURLs("dnslat", "http", addr)
 
-	ln, err := net.Listen("tcp", addr)
+	planeweblisten.LogURLs("dnslat", "http", tcpAddr)
+
+	ln, err := net.Listen("tcp", tcpAddr)
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
-	srv := &http.Server{Handler: withRequestLog(mux)}
+	srv := &http.Server{Handler: withRequestLog(handler)}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("[dnslat] http serve: %v", err)
@@ -318,5 +331,22 @@ func withRequestLog(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, code: 200}
 		next.ServeHTTP(rec, req)
 		log.Printf("[http] %s %s -> %d (%s)", req.Method, req.URL.RequestURI(), rec.code, time.Since(start).Round(time.Millisecond))
+	})
+}
+
+// localOnly rejects non-loopback clients when public_dashboard is false (no auth; loopback-only access).
+func localOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }

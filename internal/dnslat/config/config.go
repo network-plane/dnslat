@@ -12,9 +12,16 @@ import (
 )
 
 type Config struct {
-	DataDir            string               `json:"-"`
-	// ConfigFile is the absolute path of the JSON file we load/save (schedules, prefs, last_run).
-	ConfigFile         string               `json:"-"`
+	// DataDir is the application data directory (absolute). JSON key: data_dir.
+	DataDir string `json:"-"`
+	// ConfigFile is the absolute path of the JSON file we load/save.
+	ConfigFile string `json:"-"`
+	// DBPath is the SQLite DB file path (absolute or relative to config file dir when loading). JSON: db_path.
+	DBPath string `json:"-"`
+	// ListenAddr is host:port or :port for the HTTP server. JSON: listen_addr. Overridden by CLI when --listen/--listen-port are passed.
+	ListenAddr string `json:"-"`
+	// PublicDashboard when false allows HTTP only from loopback clients (127.0.0.1 / ::1). JSON: public_dashboard (default true if omitted).
+	PublicDashboard    bool                 `json:"-"`
 	SaveManualRuns     bool                 `json:"save_manual_runs"`
 	DefaultQueryDomain string               `json:"default_query_domain"`
 	Schedules          []model.Schedule     `json:"schedules,omitempty"`
@@ -23,6 +30,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
+		PublicDashboard:    true,
 		SaveManualRuns:     false,
 		DefaultQueryDomain: "example.com",
 		Schedules:          nil,
@@ -56,6 +64,8 @@ func Load(configPath string) (Config, error) {
 			cfg := Default()
 			cfg.DataDir = filepath.Dir(absCfg)
 			cfg.ConfigFile = absCfg
+			cfg.DBPath = filepath.Join(cfg.DataDir, "dnslat.results")
+			cfg.ListenAddr = ":8090"
 			return cfg, nil
 		}
 		return Config{}, err
@@ -65,28 +75,58 @@ func Load(configPath string) (Config, error) {
 	if err := json.NewDecoder(f).Decode(&fc); err != nil {
 		return Config{}, err
 	}
+	baseDir := filepath.Dir(absCfg)
 	cfg := Config{
 		ConfigFile:         absCfg,
-		DataDir:            filepath.Dir(absCfg),
+		DataDir:            baseDir,
+		DBPath:             fc.DBPath,
+		ListenAddr:         fc.ListenAddr,
 		SaveManualRuns:     fc.SaveManualRuns,
 		DefaultQueryDomain: fc.DefaultQueryDomain,
 		Schedules:          fc.Schedules,
 		LastRun:            fc.LastRun,
 	}
+	if fc.PublicDashboard == nil {
+		cfg.PublicDashboard = true
+	} else {
+		cfg.PublicDashboard = *fc.PublicDashboard
+	}
+	if strings.TrimSpace(fc.DataDir) != "" {
+		cfg.DataDir = fc.DataDir
+		if !filepath.IsAbs(cfg.DataDir) {
+			cfg.DataDir = filepath.Join(baseDir, cfg.DataDir)
+		}
+	}
+	cfg.DataDir = filepath.Clean(cfg.DataDir)
+
+	if strings.TrimSpace(cfg.DBPath) != "" {
+		if !filepath.IsAbs(cfg.DBPath) {
+			cfg.DBPath = filepath.Join(baseDir, cfg.DBPath)
+		}
+		cfg.DBPath = filepath.Clean(cfg.DBPath)
+	}
+
 	if cfg.LastRun == nil {
 		cfg.LastRun = make(map[string]time.Time)
 	}
 	if cfg.DefaultQueryDomain == "" {
 		cfg.DefaultQueryDomain = "example.com"
 	}
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = ":8090"
+	}
 	return cfg, nil
 }
 
 type fileConfig struct {
-	SaveManualRuns     bool                 `json:"save_manual_runs"`
-	DefaultQueryDomain string               `json:"default_query_domain"`
-	Schedules          []model.Schedule     `json:"schedules,omitempty"`
-	LastRun            map[string]time.Time `json:"last_run,omitempty"`
+	DataDir           string               `json:"data_dir,omitempty"`
+	DBPath            string               `json:"db_path,omitempty"`
+	ListenAddr        string               `json:"listen_addr,omitempty"`
+	PublicDashboard   *bool                `json:"public_dashboard,omitempty"`
+	SaveManualRuns    bool                 `json:"save_manual_runs"`
+	DefaultQueryDomain string              `json:"default_query_domain"`
+	Schedules         []model.Schedule     `json:"schedules,omitempty"`
+	LastRun           map[string]time.Time `json:"last_run,omitempty"`
 }
 
 func Save(cfg Config) error {
@@ -105,7 +145,12 @@ func Save(cfg Config) error {
 	}
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
+	pub := cfg.PublicDashboard
 	fc := fileConfig{
+		DataDir:            cfg.DataDir,
+		DBPath:             cfg.DBPath,
+		ListenAddr:         cfg.ListenAddr,
+		PublicDashboard:    &pub,
 		SaveManualRuns:     cfg.SaveManualRuns,
 		DefaultQueryDomain: cfg.DefaultQueryDomain,
 		Schedules:          cfg.Schedules,
